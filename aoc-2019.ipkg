@@ -1,0 +1,5 @@
+package aoc-2019
+
+modules = day1
+sourcedir = src
+opts = ""
