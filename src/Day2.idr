@@ -1,13 +1,14 @@
 module Day2
 
-import Control.ST 
+import Control.ST
 import Control.Monad.Identity
 import Prelude.List as List
 import Data.SortedMap as SMap
 import Data.Vect as V
 import Prelude.Traversable
+import Debug.Trace
 
-export 
+export
 data Day2 = D2
 
 Show Day2 where
@@ -28,11 +29,11 @@ record Intcode where
   reg3 : Int
 
 Show Intcode where
-  show (IC op r1 r2 r3) = 
+  show (IC op r1 r2 r3) =
     unwords ["IC", show op, show r1, show r2, show r3]
 
 Tape : Type
-Tape = SortedMap Int Int 
+Tape = SortedMap Int Int
 
 ||| Parsing Input
 
@@ -47,21 +48,21 @@ mapMaybe (Just a :: rest) = a :: mapMaybe rest
 
 parseInt : String -> Maybe Int
 parseInt str =
-  if all isDigit (unpack str) 
+  if all isDigit (unpack str)
      then Just (cast str)
      else Nothing
 
 parseInput : String -> Tape
 parseInput s = tape
   where
-    ints : List Int  
-    ints = mapMaybe parseInt (Prelude.Strings.split (== ',') s) 
-    
+    ints : List Int
+    ints = mapMaybe parseInt (Prelude.Strings.split (== ',') s)
+
     tape : Tape
     tape = SMap.fromList (zip keys ints)
       where
         keys = [0.. (cast (List.length ints) - 1)]
-   
+
 ||| Problem Solving
 
 record IntcodeState where
@@ -70,7 +71,7 @@ record IntcodeState where
   tape : Tape
 
 lookupReg : Int -> Tape -> Either String Int
-lookupReg n tape = 
+lookupReg n tape =
   case lookup n tape of
     Nothing => Left "Failed to lookup register"
     Just v => Right v
@@ -78,17 +79,17 @@ lookupReg n tape =
 updateReg : Int -> Int -> Tape -> Tape
 updateReg r v tape = insert r v tape
 
-intToOp : Int -> Either String Op 
-intToOp op = 
+intToOp : Int -> Either String Op
+intToOp op =
   case op of
      1 => Right Add
      2 => Right Mult
      99 => Right Halt
-     _ => Left "Invalid op code" 
+     _ => Left "Invalid op code"
 
-readIntcode : (ics : Var) 
-            -> STrans (Either String) Intcode 
-                 [ics ::: State IntcodeState] 
+readIntcode : (ics : Var)
+            -> STrans (Either String) Intcode
+                 [ics ::: State IntcodeState]
                  (const [ics ::: State IntcodeState])
 readIntcode ics = do
   ICState pos tape <- read ics
@@ -98,9 +99,9 @@ readIntcode ics = do
   op <- lift (intToOp op')
   pure (IC op src1 src2 dest)
 
-evalIntcode' : (Int -> Int -> Int) 
-            -> Int -> Int -> Int 
-            -> Tape 
+evalIntcode' : (Int -> Int -> Int)
+            -> Int -> Int -> Int
+            -> Tape
             -> Either String Tape
 evalIntcode' f r1 r2 r3 tape = do
   vr1 <- lookupReg r1 tape
@@ -115,21 +116,21 @@ evalIntcode : (ics : Var)
                 [ics ::: State IntcodeState]
                 (const [ics ::: State IntcodeState])
 evalIntcode ics (IC op src1 src2 dest) = do
-  
-    ICState pos tape <- read ics 
-    
+
+    ICState pos tape <- read ics
+
     case op of
       Add => do
         newTape <- lift (evalIntcode' (+) src1 src2 dest tape)
         write ics (ICState pos newTape)
-        pure ICContinue 
+        pure ICContinue
       Mult => do
         newTape <- lift (evalIntcode' (*) src1 src2 dest tape)
         write ics (ICState pos newTape)
-        pure ICContinue 
+        pure ICContinue
       Halt => pure ICHalt
- 
-runIntcodes : (ics : Var) 
+
+runIntcodes : (ics : Var)
            -> STrans (Either String) ()
                 [ics ::: State IntcodeState]
                 (const [ics ::: State IntcodeState])
@@ -140,22 +141,60 @@ runIntcodes ics = do
     ICContinue => runIntcodes ics
     ICHalt => pure ()
 
-initializeTape : Tape -> Tape
-initializeTape tape = 
-  updateReg 2 2 (updateReg 1 12 tape)
+initializeTape : (Int, Int) -> Tape -> Tape
+initializeTape (one,two) tape =
+  updateReg 2 two (updateReg 1 one tape)
 
-part1 : Tape -> Either String Tape
-part1 tape = do 
-  run $ do 
-    let initTape = initializeTape tape
-    var <- new (ICState 0 initTape) 
+part1' : (Int, Int) -> Tape -> Either String Tape
+part1' init tape = do
+  run $ do
+    let initTape = initializeTape init tape
+    var <- new (ICState 0 initTape)
     runIntcodes var
     ICState _ resTape <- read var
     delete var
-    pure resTape 
+    pure resTape
 
-runPart1 : String -> IO ()
-runPart1 strInput = do
-  case part1 (parseInput strInput) of
+part1 : Tape -> Either String Tape
+part1 = part1' (12,2)
+
+||| Find the two ints with which to intialize address 1 and 2 to such that the
+||| result of running the Intcode program (the value in address 0) is 19690720;
+||| Then, given the (x,y) pair, return 100 * x + y.
+part2 : Tape -> Either String Int
+part2 tape = tryPairs pairs
+  where
+    pairs : List (Int, Int)
+    pairs = [(x,y) | x <- [0..99], y <- [0..99]]
+
+    tryPair : (Int, Int) -> Either String (Maybe Int)
+    tryPair pair@(x,y) = do
+      resTape <- part1' pair tape
+      resAtZero <- lookupReg 0 resTape
+      if resAtZero == 19690720
+         then pure $ Just (100 * x + y)
+         else pure Nothing
+
+    tryPairs : List (Int,Int) -> Either String Int
+    tryPairs Nil = Left "Solution not found"
+    tryPairs (pair::rest) = do
+      res <- tryPair pair
+      case res of
+        Nothing => tryPairs rest
+        Just n => pure n
+
+||| Running part1 and part2
+
+runDay2 : Show a => String -> (Tape -> Either String a) -> IO ()
+runDay2 strInput runPart = do
+  case runPart (parseInput strInput) of
     Left err => putStrLn err
-    Right smap => print (SMap.toList smap)
+    Right smap => print smap
+
+runDay2Part1 : String -> IO ()
+runDay2Part1 strInput =
+  runDay2 strInput part1
+
+runDay2Part2 : String -> IO ()
+runDay2Part2 strInput =
+  runDay2 strInput part2
